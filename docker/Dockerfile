@@ -5,6 +5,10 @@ ARG ROCM_VERSION=7.1.1
 ARG STABLE_DIFFUSION_REF=master-445-860a78e
 ARG AMDGPU_TARGETS=gfx1100
 
+ARG USER=sd
+ARG UID=1001
+ARG GID=1001
+
 ARG ROCM_IMAGE=rocm/dev-ubuntu-${UBUNTU_VERSION}:${ROCM_VERSION}
 ARG ROCM_BUILD_IMAGE=${ROCM_IMAGE}-complete
 ARG ROCM_RUNTIME_IMAGE=${ROCM_IMAGE}
@@ -46,15 +50,15 @@ RUN cmake -S . -B build -G Ninja \
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   && cmake --build build --config Release -j "$(nproc)" \
-  && llvm-strip -s build/bin/sd-server
+  && llvm-strip -s build/bin/sd-cli build/bin/sd-server
 
 
 
-FROM ${ROCM_RUNTIME_IMAGE} AS runtime
+FROM ${ROCM_RUNTIME_IMAGE} AS base
 
-ARG USER=sd
-ARG UID=1001
-ARG GID=1001
+ARG USER
+ARG UID
+ARG GID
 
 ENV LD_LIBRARY_PATH="/opt/rocm/llvm/lib:/opt/rocm/lib"
 
@@ -67,6 +71,24 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd -g ${GID} ${USER} \
   && useradd -u ${UID} -g ${USER} -m -s /bin/bash ${USER}
+
+
+
+FROM base AS cli
+
+ARG USER
+
+COPY --from=build /src/stable-diffusion.cpp/build/bin/sd-cli /app/bin/sd-cli
+
+USER ${USER}
+
+ENTRYPOINT ["/app/bin/sd-cli"]
+
+
+
+FROM base AS server
+
+ARG USER
 
 COPY --from=build /src/stable-diffusion.cpp/build/bin/sd-server /app/bin/sd-server
 

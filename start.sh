@@ -1,30 +1,64 @@
 #!/bin/bash
+set -euo pipefail
 
-readonly CONTAINER_NAME="sd-server"
+MODE="${1:-server}"
+shift || true
 
-readonly HOST_MODELS_DIR="./models"
-readonly MODELS_DIR="/models"
+readonly IMAGE_BASE="${IMAGE_BASE:-rocm.stable-diffusion.cpp}"
+readonly CLI_IMAGE="${IMAGE_BASE}:cli"
+readonly SERVER_IMAGE="${IMAGE_BASE}:server"
 
-readonly MODEL_DIR="${MODELS_DIR}/flux2"
-readonly MODEL_PATH="${MODEL_DIR}/flux2-dev-Q2_K.gguf"
-readonly VAE_PATH="${MODEL_DIR}/ae.safetensors"
-readonly LLM_PATH="${MODEL_DIR}/Mistral-Small-3.2-24B-Instruct-2506-UD-IQ2_XXS.gguf"
+readonly HOST_MODELS_DIR="${HOST_MODELS_DIR:-./models}"
+readonly MODELS_DIR="${MODELS_DIR:-/models}"
 
-docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
+readonly HOST_OUTPUT_DIR="${HOST_OUTPUT_DIR:-./output}"
+readonly OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 
-docker run -it \
-  --name ${CONTAINER_NAME} \
-  --device=/dev/kfd --device=/dev/dri \
-  --group-add video --group-add render \
-  --security-opt seccomp=unconfined \
-  --ipc=host --shm-size 16G \
-  -p 127.0.0.1:1234:1234 \
-  -v "${HOST_MODELS_DIR}:${MODELS_DIR}:ro" \
-  -v "${HOST_OUTPUTS_DIR}:${OUTPUTS_DIR}" \
-  rocm.stable-diffusion.cpp \
-    --listen-ip 0.0.0.0 \
-    --listen-port 1234 \
-    --diffusion-fa \
-    --diffusion-model ${MODEL_PATH} \
-    --vae ${VAE_PATH} \
-    --llm ${LLM_PATH}
+readonly DOCKER_GPU_ARGS=(
+  --device=/dev/kfd
+  --device=/dev/dri
+  --group-add video
+  --group-add render
+  --security-opt seccomp=unconfined
+  --ipc=host
+  --shm-size 16G
+)
+
+readonly DOCKER_VOLUME_ARGS=(
+  -v "${HOST_MODELS_DIR}:${MODELS_DIR}:ro"
+  -v "${HOST_OUTPUT_DIR}:${OUTPUT_DIR}"
+)
+
+case "${MODE}" in
+  server)
+    readonly CONTAINER_NAME="${CONTAINER_NAME:-sd-server}"
+    readonly LISTEN_IP="${LISTEN_IP:-0.0.0.0}"
+    readonly LISTEN_PORT="${LISTEN_PORT:-1234}"
+
+    docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+
+    exec docker run -it \
+      --name "${CONTAINER_NAME}" \
+      "${DOCKER_GPU_ARGS[@]}" \
+      -p "127.0.0.1:${LISTEN_PORT}:${LISTEN_PORT}" \
+      "${DOCKER_VOLUME_ARGS[@]}" \
+      "${SERVER_IMAGE}" \
+        --listen-ip "${LISTEN_IP}" \
+        --listen-port "${LISTEN_PORT}" \
+        "$@"
+    ;;
+
+  cli)
+    exec docker run -it --rm \
+      "${DOCKER_GPU_ARGS[@]}" \
+      "${DOCKER_VOLUME_ARGS[@]}" \
+      "${CLI_IMAGE}" \
+        "$@"
+    ;;
+
+  *)
+    echo "Usage: $0 [server|cli] [args...]" >&2
+    exit 1
+    ;;
+esac
+
