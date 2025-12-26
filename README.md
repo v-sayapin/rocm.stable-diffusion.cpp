@@ -1,0 +1,1 @@
+# rocm.stable-diffusion.cpp
